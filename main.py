@@ -1,16 +1,16 @@
 from fastapi import FastAPI, HTTPException, Path
 from pydantic import BaseModel, Field, field_validator
 from datetime import date
+from babel import Locale
 import pandas as pd
 import numpy as np
 import uvicorn
 import calendar
-import babel.languages
 
 app = FastAPI(title="Outgoing correspondence: sent by Thomas Mann.")
 
 # Dataset laden + "clean"
-df = pd.read_csv("outgoing.csv", sep=";", encoding="latin1")
+df = pd.read_csv("outgoing.csv", sep=";", encoding="latin1", na_values=[""])
 df.replace({np.nan: "Daten fehlen"}, inplace=True)
 
 # Muster
@@ -27,25 +27,48 @@ class Correspondence(BaseModel):
     reference_code: str = Field(
         ..., 
         description="Must be in the format B-I-UPPERCASE-NUMBERS, e.g. 'B-I-ALBER-3'.",
-        pattern=reference_code_pattern
+        pattern=reference_code_pattern,
+        alias="Signatur"
     )
-    title: str
-    scope_and_content: str
+    title: str = Field(..., alias="Titel")
+    scope_and_content: str = Field(..., alias="Form und Inhalt")
     date: str = Field(
         ..., 
         description="Must be in the format 'ca. DD.MM.YYYY', 'DD.MM.YYYY', 'ca. MM.YYYY', 'MM.YYYY', 'ca. YYYY', 'YYYY'.",
-        pattern=date_pattern
+        pattern=date_pattern,
+        alias="Entstehungszeitraum"
     )
-    notes_on_date: str
+    notes_on_date: str = Field(..., alias="Bemerkungen zur Datierung")
     extent: str = Field(
         ..., 
         description="Must be in the format NUMBER Bl./NUMBER S.",
-        pattern=extent_pattern
+        pattern=extent_pattern,
+        alias="Bemerkungen zum Umfang"
     )
-    language: str
+    language: str = Field(..., alias="Sprachen")
     id: int = Field(
-        ..., description="Must be greater or equal then 0.", ge=0
+        ..., 
+        description="Must be greater or equal then 0.",
+        ge=0,
+        alias="ID"
     )
+
+    # Bsp. für den Request Body im Swagger UI
+    model_config = {
+        "populate_by_name": True, # Damit Pydantic Aliase im Request-Body erlaubt
+        "json_schema_extra": {
+            "example": {
+                "Signatur": "B-I-CANT-1",
+                "Titel": "Thomas Mann an Georg Cantor",
+                "Form und Inhalt": "Kopie des Briefes vom 01.01.1900 aus Zürich, handschriftlich",
+                "Entstehungszeitraum": "01.01.1900",
+                "Bemerkungen zur Datierung": "",
+                "Bemerkungen zum Umfang": "1 Bl./1 S.",
+                "Sprachen": "Klingonisch",
+                "ID": 42
+            }
+        }
+    }
 
     # Prüft, ob Signatur bereits existiert
     @field_validator("reference_code")
@@ -81,15 +104,20 @@ class Correspondence(BaseModel):
             )
         return v
     
+    @staticmethod
+    def get_german_language_names():
+        locale = Locale("de")
+        return locale.languages # dict: {"en": "Englisch", "de": "Deutsch", ...}
+    
     # Prüft, ob Sprache sinnvoll ist
     @field_validator("language")
     @classmethod
     def check_language_possible(cls, v: str):
         language_stripped = v.strip()
-        german_names_dict = babel.languages.get_display_names("de")
-        german_names_dict_lower = {name.lower() for name in german_names_dict.values()}
-        if language_stripped.lower() not in german_names_dict_lower:
-            raise ValueError(f"Die Sprache '{v}' ist keine deutsche Sprache.")
+        german_names = cls.get_german_language_names()
+        german_names_lower = {name.lower() for name in german_names.values()}
+        if language_stripped.lower() not in german_names_lower:
+            raise ValueError(f"Die Sprache '{v}' ist keine bekannte Sprache auf Deutsch.")
         return language_stripped
 
     # Prüft, ob ID bereits existiert
@@ -112,6 +140,24 @@ async def get_one_correspondence(id: int = Path(..., ge=0)): # URL-Pfad-Paramete
     if row.empty:
         raise HTTPException(status_code=404, detail="Correspondence not found.")
     return row.iloc[0].to_dict()
+
+# Postet einen Eintrag als DataFrame-Zeile
+@app.post("/correspondence", status_code=201)
+async def add_correspondence(correspondence: Correspondence):
+    new_entry = {
+        "Signatur": correspondence.reference_code,
+        "Titel": correspondence.title,
+        "Form und Inhalt": correspondence.scope_and_content,
+        "Entstehungszeitraum": correspondence.date,
+        "Bemerkungen zur Datierung": correspondence.notes_on_date,
+        "Bemerkungen zum Umfang": correspondence.extent,
+        "Sprachen": correspondence.language,
+        "ID": correspondence.id
+    }
+    global df
+    df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+    df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1") # Eintrag wird in Datei gespeichert
+    return {"message": "Correspondence added successfully.", "correspondence": new_entry}
 
 # Startet Uvicorn-Server
 if __name__ == "__main__":
