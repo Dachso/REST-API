@@ -162,6 +162,22 @@ async def add_correspondence(correspondence: Correspondence):
     df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1") # Eintrag wird in Datei gespeichert
     return {"message": "Correspondence added successfully.", "correspondence": new_entry}
 
+# Löscht einen Eintrag
+@app.delete("/correspondence/{id}", status_code=200)
+async def delete_correspondence(id: int = Path(..., ge=0)):
+    global df
+    row_index = df.index[df["ID"] == id].tolist()
+
+    if not row_index:
+        raise HTTPException(status_code=404, detail=f"Eintrag mit ID {id} nicht gefunden.")
+
+    df = df.drop(index=row_index[0]).reset_index(drop=True)
+    df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1")
+
+    return {"message": f"Eintrag mit ID {id} wurde gelöscht."}
+
+
+
 # Startet Uvicorn-Server
 if __name__ == "__main__":
     url = "http://127.0.0.1:5000/docs"
