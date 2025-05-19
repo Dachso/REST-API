@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Path
+from fastapi import FastAPI, HTTPException, Path, Body
 from pydantic import BaseModel, Field, field_validator
 from datetime import date
 from babel import Locale
@@ -15,9 +15,9 @@ df = pd.read_csv("outgoing.csv", sep=";", encoding="latin1", na_values=[""])
 df.replace({np.nan: "Daten fehlen"}, inplace=True)
 
 # Muster
-reference_code_pattern = r"^B-I-[A-Z]+-\d+$" # Erlaubt: "B-I-GROßBUCHSTABEN-ZAHL", z. B. "B-I-ALBER-3"
+reference_code_pattern = r"^B-I-[A-Z]+-\d+(\.\d+)?$" # Erlaubt: "B-I-GROßBUCHSTABEN-ZAHL(.ZAHL)", z. B. "B-I-ALBER-3" oder "B-I-ALBER-3.1"
 date_pattern = r"^(ca\.\s*)?(\d{2}\.\d{2}\.\d{4}|\d{2}\.\d{4}|\d{4})$" # Erlaubt: "ca. DD.MM.YYYY", "DD.MM.YYYY", "ca. MM.YYYY", "MM.YYYY", "ca. YYYY", "YYYY"
-extent_pattern = r"\d+\sBl\./\d+\sS\." # Erlaubt: ZAHL Bl./ZAHL S.
+extent_pattern = r"^(\d+\sBl\./\d+\sS\.)(\s\+\s\d+\sBl\./\d+\sS\.)*$" # Erlaubt: ZAHL Bl./ZAHL S.( + ZAHL Bl./ZAHL S.)
 
 # Thomas Manns Lebensdauer
 birth_date = date(1875, 6, 6)
@@ -27,7 +27,7 @@ death_date = date(1955, 8, 12)
 class Correspondence(BaseModel):
     reference_code: str = Field(
         ..., 
-        description="Must be in the format B-I-UPPERCASE-NUMBERS, e.g. 'B-I-ALBER-3'.",
+        description="Must be in the format B-I-UPPERCASE-NUMBERS(.NUMBERS), e.g. 'B-I-ALBER-3' or 'B-I-ALBER-3.1'.",
         pattern=reference_code_pattern,
         alias="Signatur"
     )
@@ -42,14 +42,14 @@ class Correspondence(BaseModel):
     notes_on_date: str = Field(..., alias="Bemerkungen zur Datierung")
     extent: str = Field(
         ..., 
-        description="Must be in the format NUMBER Bl./NUMBER S.",
+        description="Must be in the format NUMBER Bl./NUMBER S.( + NUMBER Bl./NUMBER S.).",
         pattern=extent_pattern,
         alias="Bemerkungen zum Umfang"
     )
     language: str = Field(..., alias="Sprachen")
     id: int = Field(
         ..., 
-        description="Must be greater or equal then 0.",
+        description="Must be greater or equal than 0.",
         ge=0,
         alias="ID"
     )
@@ -70,20 +70,13 @@ class Correspondence(BaseModel):
         } # Bsp. für den Request Body im Swagger UI
     }
 
-    # Prüft, ob Signatur bereits existiert
-    @field_validator("reference_code")
-    @classmethod
-    def check_reference_code_unique(cls, v):
-        if v in df["Signatur"].values:
-            raise ValueError(f"Die Signatur '{v}' existiert bereits.")
-        return v
-    
     # Prüft, ob Datum sinnvoll ist
     @field_validator("date")
     @classmethod
     def check_date_possible(cls, v: str):
         processed_date_str = v.replace("ca. ", "").strip()
         parts = processed_date_str.split(".")
+
         try:
             if len(parts) == 3: # DD.MM.YYYY
                 d, m, y = map(int, parts)
@@ -97,16 +90,19 @@ class Correspondence(BaseModel):
                 end_date = date(y, 12, 31)
         except ValueError as e:
             raise ValueError(f"Invalid date components in '{v}': {e}") from e
+        
         if not (start_date <= death_date and end_date >= birth_date):
             raise ValueError(
                 f"Datum '{v}' (interpretiert als {start_date:%d.%m.%y} - {end_date:%d.%m.%y}) "
                 f"ist ausserhalb Thomas Mann's Lebensdauer (06.06.1875 - 12.08.1955)."
             )
+        
         return v
     
     @staticmethod
     def get_german_language_names():
         locale = Locale("de")
+
         return locale.languages # dict: {"en": "Englisch", "de": "Deutsch", ...}
     
     # Prüft, ob Sprache sinnvoll ist
@@ -116,34 +112,44 @@ class Correspondence(BaseModel):
         language_stripped = v.strip()
         german_names = cls.get_german_language_names()
         german_names_lower = {name.lower() for name in german_names.values()}
+
         if language_stripped.lower() not in german_names_lower:
             raise ValueError(f"Die Sprache '{v}' ist keine bekannte Sprache auf Deutsch.")
+        
         return language_stripped
-
-    # Prüft, ob ID bereits existiert
-    @field_validator("id")
-    @classmethod
-    def check_id_unique(cls, v):
-        if v in df["ID"].values:
-            raise ValueError(f"Die ID '{v}' existiert bereits.")
-        return v
 
 # Liefert alle Einträge als JSON-Liste
 @app.get("/all-correspondences")
 async def get_all_correspondences():
-    return df.to_dict(orient="records")
+    entry = df.to_dict(orient="records")
+
+    return {"message": f"Einträge wurden erfolgreich abgerufen.", "correspondence": entry}
 
 # Liefert einen Eintrag als JSON
 @app.get("/correspondence/{id}")
-async def get_one_correspondence(id: int = Path(..., ge=0)): # URL-Pfad-Parameter id ist erforderlich, muss ein Integer und mindestens 0 sein
+async def get_one_correspondence(id: int = Path(..., ge=0)):
     row = df.loc[df["ID"] == id]
+    
     if row.empty:
-        raise HTTPException(status_code=404, detail="Correspondence not found.")
-    return row.iloc[0].to_dict()
+        raise HTTPException(status_code=404, detail=f"Eintrag mit ID {id} nicht gefunden.")
+    
+    entry = row.iloc[0].to_dict()
+
+    return {"message": f"Eintrag mit ID {id} wurde erfolgreich abgerufen.", "correspondence": entry}
 
 # Postet einen Eintrag als DataFrame-Zeile
 @app.post("/correspondence", status_code=201)
 async def add_correspondence(correspondence: Correspondence):
+    global df
+
+    # ID einmalig?
+    if correspondence.id in df["ID"].values:
+        raise HTTPException(status_code=400, detail=f"ID '{correspondence.id}' existiert bereits.")
+    
+    # Signatur einmalig?
+    if correspondence.reference_code in df["Signatur"].values:
+        raise HTTPException(status_code=400, detail=f"Signatur '{correspondence.reference_code}' existiert bereits.")
+
     new_entry = {
         "Signatur": correspondence.reference_code,
         "Titel": correspondence.title,
@@ -154,13 +160,15 @@ async def add_correspondence(correspondence: Correspondence):
         "Sprachen": correspondence.language,
         "ID": correspondence.id
     }
+
     for key, value in new_entry.items():
-        if isinstance(value, str) and value.strip() == "":
-            new_entry[key] = "Daten fehlen"
-    global df
+        if isinstance(value, str):
+            new_entry[key] = value.strip() or "Daten fehlen"
+
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
     df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1") # Eintrag wird in Datei gespeichert
-    return {"message": "Correspondence added successfully.", "correspondence": new_entry}
+
+    return {"message": "Eintrag wurde erfolgreich hinzugefügt.", "correspondence": new_entry}
 
 # Löscht einen Eintrag
 @app.delete("/correspondence/{id}", status_code=200)
@@ -174,9 +182,43 @@ async def delete_correspondence(id: int = Path(..., ge=0)):
     df = df.drop(index=row_index[0]).reset_index(drop=True)
     df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1")
 
-    return {"message": f"Eintrag mit ID {id} wurde gelöscht."}
+    return {"message": f"Eintrag mit ID {id} wurde erfolgreich gelöscht.", "deleted_id": id}
 
+# Updatet einen Eintrag
+@app.put("/correspondence/{id}", status_code=200)
+async def replace_correspondence(id: int = Path(..., ge=0), correspondence: Correspondence = Body(...)):
+    # Pfad-ID == Body-ID?
+    if correspondence.id != id:
+        raise HTTPException(status_code=400, detail=f"Body-ID {correspondence.id} muss mit Pfad-ID {id} übereinstimmen.")
 
+    # Existiert ID?
+    index = df.index[df["ID"] == id].tolist()
+    if not index:
+        raise HTTPException(status_code=404, detail=f"Eintrag mit ID {id} nicht gefunden.")
+    row_index = index[0]
+
+    # Signatur einmalig?
+    existing_sigs = set(df.loc[df.index != row_index, "Signatur"].tolist())
+    if correspondence.reference_code in existing_sigs:
+        raise HTTPException(status_code=400, detail=f"Signatur '{correspondence.reference_code}' existiert bereits.")
+
+    new_entry = {
+        "Signatur": correspondence.reference_code,
+        "Titel": correspondence.title,
+        "Form und Inhalt": correspondence.scope_and_content,
+        "Entstehungszeitraum": correspondence.date,
+        "Bemerkungen zur Datierung": correspondence.notes_on_date or "Daten fehlen",
+        "Bemerkungen zum Umfang": correspondence.extent,
+        "Sprachen": correspondence.language,
+        "ID": correspondence.id
+    }
+
+    for col, val in new_entry.items():
+        df.at[row_index, col] = val
+
+    df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1")
+
+    return {"message": f"Eintrag mit ID {id} wurde erfolgreich aktualisiert.", "correspondence": new_entry}
 
 # Startet Uvicorn-Server
 if __name__ == "__main__":
