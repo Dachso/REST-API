@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import uvicorn
 import calendar
+import webbrowser
 
 app = FastAPI(title="Outgoing correspondence: sent by Thomas Mann.")
 
@@ -53,9 +54,8 @@ class Correspondence(BaseModel):
         alias="ID"
     )
 
-    # Bsp. für den Request Body im Swagger UI
     model_config = {
-        "populate_by_name": True, # Damit Pydantic Aliase im Request-Body erlaubt
+        "populate_by_name": True, # Damit Pydantic Aliasse im Request-Body erlaubt
         "json_schema_extra": {
             "example": {
                 "Signatur": "B-I-CANT-1",
@@ -67,7 +67,7 @@ class Correspondence(BaseModel):
                 "Sprachen": "Klingonisch",
                 "ID": 42
             }
-        }
+        } # Bsp. für den Request Body im Swagger UI
     }
 
     # Prüft, ob Signatur bereits existiert
@@ -154,6 +154,9 @@ async def add_correspondence(correspondence: Correspondence):
         "Sprachen": correspondence.language,
         "ID": correspondence.id
     }
+    for key, value in new_entry.items():
+        if isinstance(value, str) and value.strip() == "":
+            new_entry[key] = "Daten fehlen"
     global df
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
     df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1") # Eintrag wird in Datei gespeichert
@@ -161,4 +164,6 @@ async def add_correspondence(correspondence: Correspondence):
 
 # Startet Uvicorn-Server
 if __name__ == "__main__":
-    uvicorn.run("main:app", port=5000, log_level="info")
+    url = "http://127.0.0.1:5000/docs"
+    webbrowser.open(url)
+    uvicorn.run("main:app", host="127.0.0.1", port=5000, reload=True, log_level="info")
