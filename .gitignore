@@ -1,3 +1,4 @@
 # Ignoriere Bytecode-Dateien und -Ordner
 __pycache__/
 *.py[cod]
+outgoing.csv
