@@ -1,6 +1,6 @@
 import requests
 
-BASE_URL = "http://127.0.0.1:5000"
+BASE_URL = "http://92.42.46.218:5000" # privater Server
 
 # TEST GET (all entries)
 def get_all_entries():
@@ -40,7 +40,7 @@ def post_entry(signature, title, content, date, notes_on_date, extent, language,
 
     response = requests.post(f"{BASE_URL}/correspondence", json=new_entry)
 
-    if response.status_code == 201:
+    if response.status_code == 201: # 201 => Created
         print("✅ Correspondence created:")
         print(response.json())
     else:
@@ -51,10 +51,10 @@ def post_entry(signature, title, content, date, notes_on_date, extent, language,
 def delete_entry(entry_id):
     response = requests.delete(f"{BASE_URL}/correspondence/{entry_id}")
 
-    if response.status_code == 200:
+    if response.status_code == 200: # 200 => OK
         print("✅ Correspondence deleted:")
         print(response.json())
-    elif response.status_code == 404:
+    elif response.status_code == 404: # 404 => Not Found
         print("❌ Correspondence not found:", response.json()["detail"])
     else:
         print("❌ Error during DELETE:", response.status_code)
