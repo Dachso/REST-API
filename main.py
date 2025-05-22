@@ -11,7 +11,7 @@ import webbrowser
 app = FastAPI(title="Outgoing correspondence: sent by Thomas Mann.")
 
 # Dataset laden + "clean"
-df = pd.read_csv("outgoing.csv", sep=";", encoding="latin1", na_values=[""])
+df = pd.read_csv("outgoing.csv", sep=";", encoding="utf-8", na_values=[""])
 df.replace({np.nan: "Daten fehlen"}, inplace=True)
 
 # Muster
@@ -166,7 +166,7 @@ async def add_correspondence(correspondence: Correspondence):
             new_entry[key] = value.strip() or "Daten fehlen"
 
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
-    df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1") # Eintrag wird in Datei gespeichert
+    df.to_csv("outgoing.csv", sep=";", index=False, encoding="utf-8") # Eintrag wird in Datei gespeichert
 
     return {"message": "Eintrag wurde erfolgreich hinzugefügt.", "correspondence": new_entry}
 
@@ -180,7 +180,7 @@ async def delete_correspondence(id: int = Path(..., ge=0)):
         raise HTTPException(status_code=404, detail=f"Eintrag mit ID {id} nicht gefunden.")
 
     df = df.drop(index=row_index[0]).reset_index(drop=True)
-    df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1")
+    df.to_csv("outgoing.csv", sep=";", index=False, encoding="utf-8")
 
     return {"message": f"Eintrag mit ID {id} wurde erfolgreich gelöscht.", "deleted_id": id}
 
@@ -216,7 +216,7 @@ async def replace_correspondence(id: int = Path(..., ge=0), correspondence: Corr
     for col, val in new_entry.items():
         df.at[row_index, col] = val
 
-    df.to_csv("outgoing.csv", sep=";", index=False, encoding="latin1")
+    df.to_csv("outgoing.csv", sep=";", index=False, encoding="utf-8")
 
     return {"message": f"Eintrag mit ID {id} wurde erfolgreich aktualisiert.", "correspondence": new_entry}
 
